@@ -1,12 +1,16 @@
 <launch>
 
   <!-- Sets the image source -->
-  <remap from="image" to="/camera/image_raw" />
+  <remap from="image" to="/camera/rgb/image_rect_color" />
+  <remap from="points" to="/camera/depth_registered/points"/>
+  <remap from="camerainfo" to="/camera/depth_registered/camera_info"/>
+  
+
 
   <node pkg="ros_markers" type="detect" name="ros_markers">
 
     <!-- Sets the TF frame of the camera. -->
-    <param name="camera_frame_id" type="str" value="my_camera" />
+    <param name="camera_frame_id" type="str" value="/camera_rgb_optical_frame" />
 
     <!-- Defines which and where are the markers in the environment. The sample
     file (markers_configuration_sample.yml) provides complete documentation.
@@ -19,7 +23,7 @@
 
     <!-- set the default size of markers, in millimeters, which are not 
     in the configuration file. -->
-    <param name="default_marker_size" type="double" value="30.0" />
+    <param name="default_marker_size" type="double" value="90.0" />
 
     <!-- set the level of filtering applied on the detected markers. 1.0 means
     no filtering, while 0.0 is the maximum level of filtering. 
