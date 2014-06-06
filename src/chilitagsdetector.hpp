@@ -14,12 +14,41 @@
 #include <image_geometry/pinhole_camera_model.h>
 #include <cv_bridge/cv_bridge.h>
 
+#include <sensor_msgs/PointCloud2.h>
+#include <pcl_ros/point_cloud.h>
+#include <pcl/point_types.h>
+
+
+#include <pcl/io/pcd_io.h>
+#include <sensor_msgs/Image.h>
+
+
+#include <pcl/point_types.h>
+#include <pcl/registration/icp.h>
+#include <pcl/registration/registration.h>
+#include <pcl/registration/transformation_estimation_svd.h>
+
+#include <fstream>
+#include <iostream>
+#include <fcntl.h>
+
 #ifdef WITH_KNOWLEDGE
 #include <liboro/oro.h>
 #include <liboro/socket_connector.h>
 #endif
 
 #define USE_CHILITAGS_DEFAULT_PARAM -1
+#define MAPSIZE_DEF 4
+
+const std::string cloudTopic_ = "points";
+typedef cv::Matx<float, 4, 2> Quad;
+typedef pcl::PointCloud<pcl::PointXYZRGB> PointCloud;
+typedef pcl::registration::TransformationEstimationSVD<pcl::PointXYZRGB, pcl::PointXYZRGB> TransformationEstimationSVD;
+struct _transf_
+{
+  Eigen::Matrix4f tf;
+  int markernum;
+};
 
 class ChilitagsDetector
 {
@@ -65,6 +94,7 @@ public:
                       double tagSize = USE_CHILITAGS_DEFAULT_PARAM,
                       double gain = USE_CHILITAGS_DEFAULT_PARAM,
                       int persistence = USE_CHILITAGS_DEFAULT_PARAM);
+    ~ChilitagsDetector(void);
 
 private:
 
@@ -72,7 +102,22 @@ private:
     oro::SocketConnector connector;
     oro::Ontology* kb;
 #endif
+//thijs
+    ros::NodeHandle rosNode_;
+    ros::Subscriber cloud_sub_;
+    sensor_msgs::PointCloud2ConstPtr cloud_;
+    std::map<int, Quad> map;
+    std::ofstream logging;
+    int 	mapsize; // size of the map
+    _transf_ 	transfs[30];
+    _transf_ 	transf_map[30]; // array of transfer matrices building a world map
+    _transf_ 	transf_curr[30]; // current transfer matrices linking camera to world frame
+    std::map<int,int> mapset;
+    int ROS_sock;
 
+
+    
+     
     ros::NodeHandle& rosNode;
     image_transport::ImageTransport it;
     image_transport::CameraSubscriber sub;
@@ -86,12 +131,17 @@ private:
     bool firstUncalibratedImage;
 
     cv::Mat inputImage;
+    chilitags::Chilitags chilitags2d;
     chilitags::Chilitags3D chilitags3d;
     std::set<std::string> objectsSeen;
-
     void setROSTransform(cv::Matx44d trans, tf::Transform& transform);
 
     void findMarkers(const sensor_msgs::ImageConstPtr& msg,
                      const sensor_msgs::CameraInfoConstPtr& camerainfo);
+   
+    void cloudCallback (const PointCloud::ConstPtr& msg); //pcl::PCLPointCloud2::ConstPtr& 
+  
+
+    
 };
 
