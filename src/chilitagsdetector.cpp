@@ -8,6 +8,17 @@ using namespace cv;
 // some lag in TF.
 #define TRANSFORM_FUTURE_DATING 0
 
+ pcl::PointXYZRGB makeRGBPoint( float x, float y, float z )
+  {
+    pcl::PointXYZRGB p;
+    p.x = x;
+    p.y = y; 
+    p.z = z;
+    return p;
+  }
+  
+  
+
 ChilitagsDetector::ChilitagsDetector(ros::NodeHandle& rosNode,
                                      const string& camera_frame, 
                                      const string& configFilename,
@@ -22,8 +33,8 @@ ChilitagsDetector::ChilitagsDetector(ros::NodeHandle& rosNode,
 #ifdef WITH_KNOWLEDGE
             connector("localhost", "6969"),
 #endif
+	    chilitags2d(),
             chilitags3d(cv::Size(0,0)) // will call setDefaultTagSize and setFilter with default chilitags parameter values
-
 {
 #ifdef WITH_KNOWLEDGE
     try {
@@ -33,7 +44,9 @@ ChilitagsDetector::ChilitagsDetector(ros::NodeHandle& rosNode,
         exit(1);
     }
 #endif
-    sub = it.subscribeCamera("image", 1, &ChilitagsDetector::findMarkers, this);
+//     sub = it.subscribeCamera("image", 1, &ChilitagsDetector::findMarkers, this);
+    cloud_sub_ = rosNode_.subscribe<PointCloud>(cloudTopic_, 1, &ChilitagsDetector::cloudCallback, this);
+
     chilitags3d.readTagConfiguration(configFilename, omitOtherTags);
 
     if(tagSize!=USE_CHILITAGS_DEFAULT_PARAM)
@@ -48,7 +61,44 @@ ChilitagsDetector::ChilitagsDetector(ros::NodeHandle& rosNode,
                       "it must be both or neither.");
           }
     }
+    
+    
+    logging.open("/home/mpjansen/test/ros_markers.csv" ,  std::fstream::out|std::fstream::trunc);
+	if (logging.is_open())
+	{
+	ROS_INFO("File opened");
+	}
+	else
+	{
+	  ROS_INFO("File not opened");
+	
+	}
+	mapsize = MAPSIZE_DEF;
+        for(int g = 0; g < mapsize; g++)
+	  {
+	  logging 				<< "R(0.0),"
+						<< "R(1.0),"
+						<< "R(2.0),"
+						<< "R(0.1),"
+						<< "R(1.1),"
+						<< "R(2.1),"
+						<< "R(0.2),"
+						<< "R(1.2),"
+						<< "R(2.2),"
+						<< "X,"
+						<< "Y,"
+						<< "Z,"
+						<< "Num,";
+		
+	  }
+	  
+	  logging			<<"\n";
 
+}
+
+ChilitagsDetector::~ChilitagsDetector(void )
+{
+   logging.close();
 }
 
 
@@ -67,9 +117,85 @@ void ChilitagsDetector::setROSTransform(Matx44d trans, tf::Transform& transform)
     transform.setRotation(qrot);
 }
 
+void ChilitagsDetector::cloudCallback(const PointCloud::ConstPtr& msg)
+{
+    sensor_msgs::ImagePtr image_msg(new sensor_msgs::Image);
+    pcl::PCLImage pcl_image;
+    pcl::toPCLPointCloud2(*msg, pcl_image);
+    pcl_conversions::moveFromPCL(pcl_image, *image_msg);
+     
+    inputImage = cv_bridge::toCvShare(image_msg)->image; 
+    map = chilitags2d.find(inputImage);
+
+    
+    
+    
+    
+    for (int i = 0; i <  mapsize; i++)
+    {  
+    transfs[i].tf.setZero();
+    }
+    
+    for(auto& kv : map)
+    {
+    PointCloud marker;
+    Quad quad = kv.second; 
+    
+      try{
+      marker.push_back( (*msg).at( (int)quad(0,0),(int)quad(0,1) )); // upper left
+      marker.push_back( (*msg).at( (int)quad(1,0),(int)quad(1,1) )); // upper right
+      marker.push_back( (*msg).at( (int)quad(2,0),(int)quad(2,1) )); // lower right
+      marker.push_back( (*msg).at( (int)quad(3,0),(int)quad(3,1) ));
+      }
+      
+      catch (const std::out_of_range& e)
+      {
+	std::cout << "Out of Range error.";
+	continue;	
+      }      
+      /* create an ideal cloud */
+      double w = 78.6;
+      PointCloud ideal;
+      ideal.push_back( makeRGBPoint(-w/2,w/2,0) );
+      ideal.push_back( makeRGBPoint(w/2,w/2,0) );
+      ideal.push_back( makeRGBPoint(w/2,-w/2,0) );
+      ideal.push_back( makeRGBPoint(-w/2,-w/2,0) );
+      
+      Eigen::Matrix4f t;
+      TransformationEstimationSVD obj;
+      obj.estimateRigidTransformation( marker, ideal, t );
+
+      ROS_INFO ("Num %i Pos x %f y %f z %f" ,kv.first,t(0,3),t(1,3),t(2,3));
+      
+      transfs[kv.first].tf = t;
+      transfs[kv.first].markernum = kv.first;
+    }
+        for (int i =0; i < mapsize; i++)
+    {
+     logging 		<<	  transfs[i].tf(0,0)<<","
+			<<	  transfs[i].tf(1,0)<<","
+			<<	  transfs[i].tf(2,0)<<","
+			<<	  transfs[i].tf(0,1)<<","
+			<<	  transfs[i].tf(1,1)<<","
+			<<	  transfs[i].tf(2,1)<<","
+			<<	  transfs[i].tf(0,2)<<","
+			<<	  transfs[i].tf(1,2)<<","
+			<<	  transfs[i].tf(2,2)<<","
+			<<	  transfs[i].tf(0,3)<<","
+			<<	  transfs[i].tf(1,3)<<","
+			<<	  transfs[i].tf(2,3)<<","
+			<< 	  transfs[i].markernum<<",";
+    }
+    
+    logging 		<< "\n";
+    
+}
+
+
 void ChilitagsDetector::findMarkers(const sensor_msgs::ImageConstPtr& msg, 
                                     const sensor_msgs::CameraInfoConstPtr& camerainfo)
 {
+  
     // updating the camera model is cheap if not modified
     cameramodel.fromCameraInfo(camerainfo);
     // publishing uncalibrated images? -> return (according to CameraInfo message documentation,
@@ -97,13 +223,15 @@ void ChilitagsDetector::findMarkers(const sensor_msgs::ImageConstPtr& msg,
         *                      Markers detection                           *
         ********************************************************************/
 
-    auto foundObjects = chilitags3d.estimate(inputImage);
+    auto map2 = chilitags2d.find(inputImage);
+    auto foundObjects = chilitags3d.estimate(map2);
     ROS_DEBUG_STREAM(foundObjects.size() << " objects found.");
 
     /****************************************************************
     *                Publish TF transforms                          *
     *****************************************************************/
 
+    
 #ifdef WITH_KNOWLEDGE
     auto previouslySeen(objectsSeen);
 #endif
